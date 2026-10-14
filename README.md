@@ -211,4 +211,7 @@ This project serves as a reference for static recompilation of other Xbox 360 XB
 
 ## Legal
 
+The code in this repo is MIT: see [LICENSE](LICENSE). Code generated from the
+game (`generated/`) is made locally from your own copy and never committed.
+
 This project contains no copyrighted game assets. You must provide your own legally obtained copy of Vigilante 8 Arcade. This is a clean-room reimplementation of the runtime environment, not a copy of the game.
