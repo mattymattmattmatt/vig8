@@ -38,15 +38,18 @@ function Fail($msg) {
     Write-Host "Details are in $Log"
     exit 1
 }
-# Run a native command, logging its output; stop on a non-zero exit.
+# Run a native command, logging its output; stop on a non-zero exit. Only the
+# exit code counts: Windows PowerShell turns a native program's stderr (git's
+# "Cloning into ...") into error records, which 'Stop' would treat as fatal.
 function Run($what, [scriptblock]$cmd) {
+    $ErrorActionPreference = 'Continue'
     & $cmd *>> $Log
     if ($LASTEXITCODE -ne 0) { Fail "$what failed (exit $LASTEXITCODE)." }
 }
 function Ask($q) { $Yes -or ((Read-Host "$q [y/N]") -match '^[yY]') }
 function Clone($url, $dir, $commit) {
     if (-not (Test-Path (Join-Path $dir '.git'))) {
-        Run "Cloning $url" { git clone $url $dir }
+        Run "Cloning $url" { git -c core.longpaths=true clone $url $dir }
     }
     Run "Checking out $commit" { git -C $dir fetch --quiet origin; git -C $dir checkout --quiet $commit }
 }
@@ -121,10 +124,12 @@ Step 'ReXGlue SDK (the first build takes 10-20 minutes)'
 $sdkStamp = Join-Path $SdkInstall 'commit.txt'
 if (-not ((Test-Path $sdkStamp) -and ((Get-Content $sdkStamp) -eq $SdkCommit))) {
     Clone $SdkRepo $Sdk $SdkCommit
-    Run 'Fetching SDK submodules' { git -C $Sdk submodule update --init --recursive }
+    Run 'Fetching SDK submodules' { git -C $Sdk -c core.longpaths=true submodule update --init --recursive }
     Push-Location $Sdk
     try {
-        Run 'Configuring the SDK' { cmake --preset win-amd64 "-DCMAKE_RC_COMPILER=$Llvm\llvm-rc.exe" }
+        # Forward slashes: CMake reads the backslashes in C:\Program Files\... as escapes.
+        $rc = ($Llvm -replace '\\', '/') + '/llvm-rc.exe'
+        Run 'Configuring the SDK' { cmake --preset win-amd64 "-DCMAKE_RC_COMPILER=$rc" }
         Run 'Building the SDK' { cmake --build out/build/win-amd64 --config Release }
         Run 'Installing the SDK' { cmake --install out/build/win-amd64 --config Release --prefix out/install/win-amd64 }
     } finally { Pop-Location }
