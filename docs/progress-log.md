@@ -1,5 +1,24 @@
 # Vigilante 8 Arcade Recomp - Progress Log
 
+Dated notes from the investigation, newest at the top of each section. Current state is in the
+README; what's next is in ROADMAP.md.
+
+## 2026-10-20 - Rebuilt on ReXGlue 0.10
+
+- Moved from ReXGlue 0.1.2 to our fork of 0.10 (`development@bd833a2` plus fixes). Two of them
+  came from this port and went in as fork PRs #1 (libmspack symlinks break a Windows clone) and
+  #2 (the `XUsbcam*` exports weren't built, so vig8 didn't link).
+- Codegen needed 2 manifest entries to compile (one function bounded, one split function
+  declared whole) and 20 vtable-only entries to run past startup, all carried over from the 0.1
+  config. 0.10 finds the 81 switch tables itself.
+- The first run stopped at `Call to invalid or unregistered function at guest address 0x821A17D0`,
+  one of the vtable-only functions; with the 0.1 list restored it runs on.
+- Dropped what the SDK now does: the FPS overlay, settings file, menus, keyboard driver, render
+  path and resolution options (all F4 overlay cvars now), the license-mask override (SDK
+  `license_mask`), and stubs for APIs the SDK implements. Dropped save/load state (load never
+  worked). Kept: four-player sign-in, vehicle unlock, the Live-failure quit guard, networking.
+- The relay registered as title `584109A8`; the game is `584108A8`. Fixed.
+
 ## Phase Overview
 
 | Phase | Description | Status |

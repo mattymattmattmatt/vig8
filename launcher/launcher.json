@@ -1,0 +1,17 @@
+{
+  "title": "Vigilante 8 Arcade",
+  "repo": "sp00nznet/vig8",
+  "accent": "#e8731c",
+  "note": {
+    "windows": "The first build takes 20 to 40 minutes and about 8 GB. Git, CMake, Ninja, LLVM, Python and the Visual Studio Build Tools (about 3 GB) are installed if they are missing; Windows asks for permission once. Choose the folder holding your Vigilante 8 Arcade package (from an Xbox 360 hard drive or USB stick) or the extracted game with default.xex."
+  },
+  "game": {
+    "name": "Vigilante 8 Arcade",
+    "files": ["default.xex|Vigilante 8 Arcade*|*.stfs|????????????????????????????????????????"]
+  },
+  "sources": [],
+  "setup": {
+    "windows": ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\\setup.ps1", "-Yes", "-Game", "{game}"]
+  },
+  "play": "Play.cmd"
+}

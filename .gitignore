@@ -1,75 +1,65 @@
-# Xbox 360 binaries (do NOT commit game executables)
+# --- From the game: never committed (REPO_RULES section 3) ---
+# Your own copy of the game, as the XBLA package or extracted.
 Vigilante 8 Arcade
 Vigilante 8 Arcade.zip
+extracted/
 *.xex
 *.xexp
-*.xbe
-
-# Extracted game data (copyrighted content)
-extracted/
-
-# XenonRecomp toolchain (cloned locally)
-tools/XenonRecomp/
-
-# Tool build artifacts and intermediate files
-tools/*.bin
-tools/*.exe
-extract_pe.exe
-
-# Build artifacts
-build/
-out/
-*.obj
-*.o
+*.stfs
+# Codegen output: C++ lifted from default.xex. Made on your machine, never shared.
+generated/
+project/generated/
+ppc/
+# Builds of it, and anything that carries one.
 *.exe
 *.dll
-*.lib
 *.pdb
+*.lib
+*.zip
+
+# --- Build trees and cloned tools ---
+build/
+out/
+project/build*/
+tools/rexglue-sdk*/
+tools/xlive/
+tools/360tools/
+tools/XenonRecomp/
+*.bin
+*.obj
+*.o
 *.ilk
 *.exp
 
-# Generated recomp output (large, reproducible)
-ppc/
-generated/vig8_recomp.*.cpp
+# --- Setup and run output ---
+Play.cmd
+setup.log
+logs/
+*.log
+vig8.toml
+scratch/
+/[0-9]*/
+gpu_debug/
+*.mp4
 
-# ReXGlue SDK (large, external dependency)
-tools/rexglue-sdk/
-
-# Build output directories
-project/out/
-
-# Launch script (local convenience)
-run.bat
-
-# User settings (per-installation)
-vig8_settings.toml
-
-# Debug screenshots / reference images
-whitescreen.png
-menu.png
-
-# Crash logs (debug artifacts)
-crash_log*.txt
-
-# IDE / editor
+# --- Editors and OS ---
 .vs/
 .vscode/
+.idea/
 *.suo
 *.user
-*.sln.docstates
-.idea/
-
-# OS
+CMakeUserPresets.json
+__pycache__/
 Thumbs.db
 Desktop.ini
 .DS_Store
 
-# Recompilation logs (reproducible)
-*.log
-
-# Claude Code local settings
+# --- Local notes (kept out of every repo) ---
+CLAUDE.md
 .claude/
-
-# Generated from the game or taken from it: made locally, never
-# committed (REPO_RULES section 3)
-generated/
+run.bat
+makezip.ps1
+*.png.bak
+crash_log*.txt
+menu.png
+whitescreen.png

@@ -1,217 +1,206 @@
-# Vigilante 8 Arcade - Static Recompilation
+# Vigilante 8 Arcade (Xbox 360, 2008) — Static Recompilation
 
-**Vigilante 8 Arcade** (Xbox 360 / XBLA) running natively on PC via static recompilation. No emulator. No interpreter. Just raw, recompiled C++ running at full speed.
+Vigilante 8 Arcade's Xbox 360 executable, recompiled from PowerPC to native x86-64 C++ with the
+[ReXGlue SDK](https://github.com/rexglue/rexglue-sdk), so it runs on Windows without an emulator.
+The XBLA game never had a PC release.
 
-![Gameplay - Oil Fields](images/gameplay.png)
-*Full 3D gameplay at 90 FPS — vehicles, terrain, weapons, HUD, and sky all rendering via D3D12*
+![A Quest battle on Oil Fields in the recompiled build](docs/screenshots/combat.png)
 
-![Gameplay - Combat](images/gameplay2.png)
-*Vehicular combat with weapon pickups, targeting, and particle effects*
+## Status
 
-![Main Menu](images/screenshot.png)
-*Main menu at 92 FPS*
+**v0.1.0, alpha.** Single player works: boot, menus, Quest, and full battles with correct graphics,
+audio and controller input, on ReXGlue 0.10. Multiplayer is written but not yet tested on this
+SDK.
 
-![Split Screen](images/splitscreen.png)
-*Local split-screen multiplayer*
+| Feature | State |
+| --- | --- |
+| Boot, Activision logo, menus | works |
+| Single player: Quest into a battle on Oil Fields | works |
+| Other modes and levels | expected to work (they did on the 0.1 build); not re-tested on 0.10 |
+| Local split-screen (`--signed_in_players=2`..`4`) | worked on the 0.1 build; not re-tested |
+| System Link (LAN) and internet play via an [xlive](https://github.com/sp00nznet/xlive) relay | the relay found a hosted session on the 0.1 build, then crashed; not tested on 0.10 ([details](docs/networking.md#what-has-been-tested)) |
+| Startup | about 90 s before the window appears on the test machine ([ROADMAP](ROADMAP.md)) |
 
-## How It Works
+This repository holds no game code or data. The C++ is generated on your machine from your own copy
+of the game and is never committed or published, and neither is a build of it (see
+[License](#license)).
 
-Instead of emulating a PowerPC CPU instruction-by-instruction at runtime, this project translates the **entire Xbox 360 binary** into equivalent C++ source code ahead of time. The result: **1.8 million lines of generated C++** across 49 files that compile into a native x86-64 executable. The game logic runs at full speed because it IS native code — no JIT, no interpreter, no CPU emulation overhead.
+## Screenshots
 
-The Xbox 360's Xenos GPU commands are processed by a D3D12 backend (derived from the [Xenia](https://github.com/xenia-project/xenia) emulator's GPU code), translating Xbox 360 shaders to PC shaders in real-time.
+From the recompiled build, 2026-10-20.
 
-**Built with:**
-- [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) — PowerPC static recompiler by hedge-dev
-- [ReXGlue SDK](https://github.com/hedge-dev/XenonRecomp) — Runtime SDK providing Xbox 360 kernel, GPU (D3D12), audio (XMA), and input emulation
+![Main menu](docs/screenshots/main-menu.png)
+![Quest select](docs/screenshots/quest-select.png)
+![Oil Fields](docs/screenshots/oil-fields.png)
 
-## Current Status
+## Getting Started
 
-**The game is playable.** It boots, navigates menus, loads levels, and runs full 3D gameplay at 90 FPS. Vehicles drive, weapons fire, enemies attack, audio plays, controllers work with rumble, and the full 3D world renders — terrain, sky, buildings, vehicles, particles, and HUD.
+You need your own copy of Vigilante 8 Arcade (title ID `584108A8`): the XBLA package copied off an
+Xbox 360 hard drive or USB stick (a file with a 40-character hex name, under
+`Content\0000000000000000\584108A8\000D0000\`), or a folder you already extracted it to that
+contains `default.xex`.
 
-| What Works | Status |
-|-----------|--------|
-| Game boot & CRT initialization | Working |
-| Menu navigation & UI | Working |
-| Audio playback (XMA decode) | Working |
-| Controller input + rumble (4 players) | Working |
-| HUD rendering (minimap, targeting, health) | Working |
-| File I/O (38 game data files) | Working |
-| Fiber-based cooperative threading (6 threads) | Working |
-| GPU pipeline (D3D12, shader translation) | Working |
-| 3D world rendering (terrain, vehicles, sky) | Working |
-| Weapon effects & particles | Working |
-| 79 shaders translated, 58+ pipelines | Working |
-| ~2,800 draw calls / frame, 15 resolves / frame | Working |
-| Settings persistence (TOML config) | Working |
-| Save/Load state (full kernel state) | Working |
-| Fullscreen toggle (F11 hotkey) | Working |
-| Vehicle unlock & debug options | Working |
-| Local multiplayer (split-screen) | Working |
-| LAN multiplayer (system link) | In progress (networking wired up, needs testing) |
+### Quick start
 
-### Menu System & Settings
+**Installer:** download `Vig8-Installer-windows-x64.exe` from the
+[latest release](https://github.com/sp00nznet/vig8/releases), run it, and point it at the folder
+holding your package. It does everything below and gives you a **Play** button. Windows
+SmartScreen will ask first (**More info**, **Run anyway**): the installer isn't signed.
 
-The recompiled build includes a native Win32 menu bar with ImGui configuration dialogs:
+**Or from a download of this repository:**
 
-- **File** — Save/Load state (full kernel state serialization to `vig8_savestate.bin`)
-- **Config → Graphics** — Render path (ROV/RTV), resolution scale (1x/2x), fullscreen toggle
-- **Config → Controls** — 4-player controller slots (Auto/None/Keyboard) with live connection detection
-- **Config → Game** — Full game unlock (bypass trial mode)
-- **Config → Debug** — FPS overlay, debug console visibility, player invulnerability, unlock all vehicles
-- **Help → About**
+1. Green **Code** button → **Download ZIP**, and unzip it somewhere with about 10 GB free.
+2. Double-click **`Setup.cmd`**.
+   - It checks for Git, CMake, Ninja, LLVM/Clang, Python and the Visual Studio C++ Build Tools, and
+     asks before installing anything that's missing (through `winget`).
+   - It asks for your package, or a folder holding it or `default.xex`.
+   - It then builds the ReXGlue SDK (10–20 minutes the first time) and the game (about 5 minutes).
+3. When it prints `Done.`, double-click **`Play.cmd`**.
 
-Settings persist to `vig8_settings.toml`. Fullscreen can also be toggled with **F11**.
+If it stops, it says what to do in one line and writes the details to `setup.log`. Running it again
+picks up where it left off.
 
-## Quick Start
+### Step by step
 
-### Prerequisites
-- **Windows 10/11** (D3D12 required)
-- **CMake 3.25+**
-- **Clang 18+** (MSVC frontend via clang-cl)
-- **Ninja** build system
-- A legally obtained copy of **Vigilante 8 Arcade** (Xbox 360 XBLA)
+These are the same steps `Setup.cmd` runs.
 
-### Build
+**Prerequisites** (versions this was built with):
 
-```bash
-# 1. Clone
-git clone https://github.com/sp00nznet/vig8.git
-cd vig8
+| Tool | Version | Install |
+| --- | --- | --- |
+| Windows | 10/11 x64, D3D12 GPU | |
+| Git | 2.4x | `winget install Git.Git` |
+| CMake | 3.25+ (4.2.1 used) | `winget install Kitware.CMake` |
+| Ninja | 1.11+ | `winget install Ninja-build.Ninja` |
+| LLVM / Clang | 18+ (21.1.8 used) | `winget install LLVM.LLVM` |
+| VS 2022 Build Tools | "Desktop development with C++" | for the MSVC libraries and Windows SDK |
+| Python | 3.8+ | `winget install Python.Python.3.12` (only to unpack the package) |
 
-# 2. Place your extracted game files in extracted/
-#    (default.xex + data/ directory with .ib/.ibz files)
+**1. Game data.** Unpack the package into `extracted\` at the repository root with
+[360tools](https://github.com/sp00nznet/360tools). Give both paths in full:
 
-# 3. Build the ReXGlue SDK (one-time setup)
-cd tools/rexglue-sdk
-cmake --preset win-amd64
-cmake --build out/build/win-amd64 --config Release --target install
-cd ../..
+```
+git clone https://github.com/sp00nznet/360tools tools\360tools
+py -I tools\360tools\tools\extract_stfs.py "D:\path\to\<package>" "%CD%\extracted"
+```
 
-# 4. Run codegen (generates C++ from XEX binary)
-tools/rexglue-sdk/out/install/win-amd64/bin/rexglue.exe codegen
+It ends with `Done! Extracted 59 file(s) to ...\extracted`. `extracted\default.xex` must exist.
 
-# 5. Re-apply safe macro override in generated/vig8_init.h
-#    (see PROGRESS.md for the PPC_CALL_INDIRECT_FUNC override)
+**2. ReXGlue SDK**, from [our fork](https://github.com/sp00nznet/rexglue-sdk): upstream
+`development` at `bd833a2` plus a few fixes, listed in the fork's README. They live in a fork rather
+than going upstream because they were written with an AI assistant and ReXGlue doesn't take
+AI-written PRs.
 
-# 6. Build the game
-cd project
-cmake --preset win-amd64
+```
+git clone https://github.com/sp00nznet/rexglue-sdk tools\rexglue-sdk
+cd tools\rexglue-sdk
+git checkout d50d599
+git submodule update --init --recursive
+cmake --preset win-amd64 "-DCMAKE_RC_COMPILER=C:/Program Files/LLVM/bin/llvm-rc.exe"
 cmake --build out/build/win-amd64 --config Release
+cmake --install out/build/win-amd64 --config Release --prefix out/install/win-amd64
+cd ..\..
+```
+
+The install ends with `-- Registered rexglue in CMake user package registry`.
+
+**3. The xlive relay client** (two source files the build compiles in):
+
+```
+git clone https://github.com/sp00nznet/xlive tools\xlive
+git -C tools\xlive checkout 0632994
+```
+
+**4. Codegen** (PowerPC → C++, into the git-ignored `generated\`):
+
+```
+cd project
+..\tools\rexglue-sdk\out\install\win-amd64\bin\rexglue.exe codegen vig8_manifest.toml
+```
+
+It ends with `Codegen summary: 127 written, 0 unchanged, 0 deleted` and `Done`.
+
+**5. The game:**
+
+```
+cmake --preset win-amd64
+cmake --build build
 cd ..
-
-# 7. Run
-project/out/build/win-amd64/Release/vig8.exe extracted/
 ```
 
-The ROV render path is selected by default via `vig8_settings.toml`. All settings (render path, fullscreen, controller config, debug options) are configurable through the in-app Config menu and persist across sessions.
+The build ends with `Linking CXX executable vig8.exe`.
 
-### Important: GPU Render Path
+**6. Run it:** `project\build\vig8.exe`. It finds `extracted\` by itself.
 
-The game uses the ROV (Rasterizer Ordered Views) render path by default for correct 3D world rendering. The alternative RTV (Render Target View) path has an issue resolving the game's k_2_10_10_10_FLOAT render targets with 4xMSAA — the 3D scene resolves correctly but the intermediate textures appear white during compositing. The ROV path uses pixel shader interlock for EDRAM emulation and handles this correctly. The render path can be changed in Config → Graphics (requires restart).
+**Usual trip-ups**
 
-## Project Structure
+- `python` or `py` opens the Microsoft Store: that's Windows' app alias, not Python. Install
+  Python, or turn the alias off in *Settings → Apps → Advanced app settings → App execution
+  aliases*.
+- `clang` not found right after installing LLVM: open a new terminal so it picks up the new `PATH`,
+  or add `C:\Program Files\LLVM\bin` yourself.
+- The SDK build fails on `rexruntime.rc.res`: CMake picked Microsoft's `rc.exe`, which can't read
+  clang's preprocessed output. Pass `-DCMAKE_RC_COMPILER=.../llvm-rc.exe` as above, and delete
+  `out\build` if an older configure cached `rc.exe`.
+- `extract_stfs.py` with a relative output folder writes into a nested copy of that path. Give it a
+  full path.
+- The window takes a minute or more to appear: on the test machine SDL spends about 90 s
+  initialising video before anything else runs.
+
+## Usage
 
 ```
-vig8/
-├── config/
-│   ├── vig8_rexglue.toml          # ReXGlue codegen config (function overrides, switch tables)
-│   ├── vig8.toml                  # Legacy XenonRecomp config
-│   └── vig8_switch_tables.toml    # 81 jump table definitions
-├── generated/                     # ReXGlue codegen output
-│   ├── vig8_config.h              # Address constants (code base, image base)
-│   ├── vig8_init.h/cpp            # Function table + safe macro overrides
-│   └── vig8_recomp.*.cpp          # 17 recompiled source files (gitignored, ~60MB)
-├── project/                       # CMake project
-│   ├── CMakeLists.txt             # Build system (links rex::core/runtime/kernel/graphics/ui)
-│   └── src/
-│       ├── main.cpp               # Windowed app, VEH crash handlers, F11 fullscreen
-│       ├── stubs.cpp              # Stub implementations + vehicle unlock override
-│       ├── net.cpp/h              # LAN multiplayer networking (XNet/QoS overrides)
-│       ├── menu.cpp/h             # Menu bar + ImGui config dialogs
-│       ├── settings.cpp/h         # TOML settings persistence
-│       └── test_boot.cpp          # Console test harness with crash diagnostics
-├── src/
-│   └── kernel_stubs.cpp           # Legacy kernel stubs (pre-ReXGlue, 205 functions)
-├── tools/
-│   ├── rexglue-sdk/               # ReXGlue SDK (gitignored, built locally)
-│   ├── XenonRecomp/               # Patched XenonRecomp (gitignored)
-│   ├── find_missing_vtable_funcs.py  # Vtable scanner for missing function entries
-│   └── patches/                   # XenonRecomp source patches
-├── extracted/                     # Game files (gitignored, copyrighted)
-├── docs/                          # Technical documentation
-├── gameplay.png                   # In-game screenshot (Oil Fields level)
-├── gameplay2.png                  # In-game screenshot (combat)
-├── screenshot.png                 # Main menu screenshot
-├── PROGRESS.md                    # Detailed development log
-└── README.md
+Play.cmd                              # fullscreen on the primary monitor
+Play.cmd --fullscreen=false           # in a window (F11 toggles)
+Play.cmd --monitor=2                  # on the second monitor
+Play.cmd --signed_in_players=2        # two profiles signed in, for split-screen
+Play.cmd --relay_host=relay.example   # find internet sessions through an xlive relay
 ```
 
-## Technical Deep Dive
+In the game: **F4** opens the settings (vig8's own are under **Vig8**; they are saved to
+`project\build\vig8.toml`), **F3** the frame stats, **`** the console. A controller works directly, and
+the keyboard also plays as controller 1 (Space = A, Enter = Start, WASD = left stick; all
+rebindable in F4). The settings are listed in [docs/architecture.md](docs/architecture.md#settings).
 
-### The Recompilation Pipeline
+`VIG8_AUTOPLAY=1` adds a scripted controller that taps A every 3 seconds, which walks the menus into
+a Quest battle with nobody at the keyboard; `VIG8_AUTOPLAY_DRIVE=<seconds>` then switches to
+driving and firing. That's how the screenshots above were made.
 
-1. **XenonAnalyse** scans the XEX binary, detecting 81 jump tables and mapping the control flow graph
-2. **ReXGlue codegen** translates ~8,000 PowerPC functions into C++ using the config's function boundaries and switch table definitions
-3. **Safe macro overrides** patch the generated code to handle NULL pointers, missing vtable entries, and unimplemented instructions gracefully
-4. The result links against the ReXGlue SDK which provides a full Xbox 360 runtime: kernel (threads, sync, memory, file I/O), GPU (D3D12 command processor, shader translator), audio (XMA decoder), and input (XInput)
+Logs go to `project\build\logs\`.
 
-### GPU Pipeline (Per Frame)
+## Building from source
 
-During gameplay, the GPU processes ~2,800 draw calls and 15 EDRAM resolve operations per frame:
+The pieces and how they fit are in [docs/architecture.md](docs/architecture.md); networking is in
+[docs/networking.md](docs/networking.md), and the dated investigation notes in
+[docs/progress-log.md](docs/progress-log.md). In short:
 
-| Pass | Resolves | Description |
-|------|----------|-------------|
-| Shadow maps | 2 depth resolves | Depth-only renders for shadow casting |
-| 3D scene | 4 color + 4 depth resolves | Main world render (k_2_10_10_10_FLOAT, 4xMSAA) |
-| Post-processing | 3 color resolves | Bloom, downscale passes (k_16_16_16_16_FLOAT, k_8_8_8_8) |
-| Final composite | 1 color resolve | HUD + 3D scene → frontbuffer (k_8_8_8_8, 1280x720) |
-| Presentation | 1 swap | Texture fetch 0 → gamma correction → display |
+- `project/vig8_manifest.toml` tells ReXGlue's codegen where the game's code is and lists the
+  functions its scanner misses. Codegen also runs as a build step when the manifest changes.
+- `project/src/main.cpp` is the app; `stubs.cpp` and `net.cpp` override kernel imports and game
+  functions.
 
-### Challenges Solved
+## License
 
-- **30+ missing Altivec/VMX instructions** — Added to XenonRecomp (vector pack, shift, compare, saturating arithmetic)
-- **Indirect call safety** — Xbox 360 C++ vtable dispatch through recompiled code needs NULL checks, range validation, and graceful fallback
-- **20 missing vtable functions** — Static analysis misses functions only called through vtable pointers; discovered via automated scanning of the data section
-- **Cross-function gotos** — Static analysis sometimes splits one function into two; the codegen produces invalid goto-across-functions that must be manually merged
-- **Guest null page handling** — VEH handler intercepts null pointer dereferences in guest memory space, decodes x86-64 instructions, zeros destination registers, and continues execution
-- **Thread priority hints** — Xbox 360's `cctph`/`cctpl`/`cctpm` instructions (hardware thread scheduling hints) need to be treated as no-ops
-- **RTV resolve white screen** — The default D3D12 render target path produces white 3D output due to an EDRAM resolve issue with k_2_10_10_10_FLOAT + 4xMSAA; fixed by switching to the ROV (pixel shader interlock) path
+The code in this repository (tools, build files, runtime glue and documentation) is MIT; see
+[LICENSE](LICENSE). ReXGlue, which setup clones separately, is BSD-3-Clause. The xlive client it
+compiles in is the same author's own code.
 
-### Xbox 360 Binary Details
+The MIT licence does not and cannot cover Vigilante 8 Arcade itself. The game's code, art, audio
+and data belong to their rights holders, are not distributed here, and you need your own copy to
+use any of this. The C++ that codegen generates from the game, and any build of it, is a derivative
+of the game and outside the MIT grant for the same reason. It is made from your own copy, never
+tracked in this repository, and never attached to a release: releases carry only the installer,
+which builds the game on your machine.
 
-| Property | Value |
-|----------|-------|
-| Title | Vigilante 8 Arcade |
-| Title ID | 0x584108A8 |
-| Format | XEX2 (XBLA) |
-| Base Address | 0x82000000 |
-| Code Size | ~2MB |
-| Image Size | ~5MB (17 PE sections) |
-| Functions | ~8,000 recompiled |
-| Data Files | 38 (.ib/.ibz custom format) |
-| Game Engine | Custom (IsopodEngine) |
+## Contributors
 
-## Reusing This Work
+See [CONTRIBUTORS.md](CONTRIBUTORS.md), and [CONTRIBUTING.md](CONTRIBUTING.md) to send a fix.
 
-This project serves as a reference for static recompilation of other Xbox 360 XBLA titles using the ReXGlue SDK. The approach — XenonRecomp codegen + safe macro overrides + stub implementations for missing APIs — is directly applicable to other games. Key transferable pieces:
+## Related projects
 
-- The `PPC_CALL_INDIRECT_FUNC` safe override pattern
-- The `PPC_UNIMPLEMENTED` warn-and-skip override
-- The VEH null page handler for guest memory
-- The vtable scanner (`find_missing_vtable_funcs.py`)
-- The crash diagnostics framework (C++ exception decoding, register dumps)
-- The `--render_target_path_d3d12=rov` workaround for EDRAM resolve issues with float render targets
-
-## References
-
-- [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) — Xbox 360 static recompiler + ReXGlue SDK
-- [UnleashedRecomp](https://github.com/hedge-dev/UnleashedRecomp) — Sonic Unleashed static recomp (reference project)
-- [Xenia](https://github.com/xenia-project/xenia) — Xbox 360 emulator (GPU/kernel code heritage)
-- [N64: Recompiled](https://github.com/N64Recomp/N64Recomp) — Inspiration for the static recomp approach
-
-## Legal
-
-The code in this repo is MIT: see [LICENSE](LICENSE). Code generated from the
-game (`generated/`) is made locally from your own copy and never committed.
-
-This project contains no copyrighted game assets. You must provide your own legally obtained copy of Vigilante 8 Arcade. This is a clean-room reimplementation of the runtime environment, not a copy of the game.
+- [360tools](https://github.com/sp00nznet/360tools) — extraction and triage tools for Xbox 360 recomps
+- [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) — the recompiler and runtime this is built on
+  ([our fork](https://github.com/sp00nznet/rexglue-sdk) is what the build uses)
+- [xlive](https://github.com/sp00nznet/xlive) — the session relay for internet play
+- [recomp-launcher](https://github.com/sp00nznet/recomp-launcher) — the installer
+- [Saints Row](https://github.com/sp00nznet/saintsrow) — another Xbox 360 recomp on the same SDK fork

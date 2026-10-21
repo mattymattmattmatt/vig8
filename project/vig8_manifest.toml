@@ -1,0 +1,49 @@
+# Vigilante 8 Arcade (XBLA, title 584108A8) - ReXGlue manifest
+
+[project]
+name = "vig8"
+sdk_version = "0.10.0"
+game_root = "../extracted"
+
+[entrypoint]
+file_path = "../extracted/default.xex"
+out_directory_path = "../generated/default"
+includes = []
+
+# Functions the scanner can't bound on its own. Each group says how it was found.
+[entrypoint.functions]
+# 0x82173508 is reached only by the adjustor thunk at 0x82173E38 (below), so
+# the scanner never starts a function there.
+0x82173508 = { name = "sub_82173508" }
+# One function the scanner splits at 0x8219F6C0; the first half's loops branch
+# into the second (loc_8219F840, loc_8219F940), which fails to compile as an
+# undeclared label. Declared whole.
+0x8219F570 = { name = "sub_8219F570", size = 0x3E0 }
+
+# Reached only through vtables, so no direct call points at them and the
+# scanner leaves them out of the dispatch table; an indirect call then logs
+# "Call to invalid or unregistered function". Found by 360tools'
+# find_missing_vtable_funcs.py in 2026-02, and the first one again by that
+# log on the 0.10 rebuild.
+0x820CC2C8 = { name = "sub_820CC2C8", size = 8 }
+0x821664F0 = { name = "sub_821664F0", size = 0x74 }
+0x8216BEA8 = { name = "sub_8216BEA8", size = 0x18 }
+0x8216F518 = { name = "sub_8216F518", size = 0x24 }
+0x8216F560 = { name = "sub_8216F560", size = 0x1C }
+0x821A17D0 = { name = "sub_821A17D0", size = 0x18 }
+
+# C++ adjustor thunks, `addi r3,r3,N; b target`, 8 bytes each, vtable-only.
+0x8216B558 = { name = "sub_8216B558", size = 8 }
+0x82173E28 = { name = "sub_82173E28", size = 8 }
+0x82173E30 = { name = "sub_82173E30", size = 8 }
+0x82173E38 = { name = "sub_82173E38", size = 8 }
+0x82173E68 = { name = "sub_82173E68", size = 8 }
+0x82174EC8 = { name = "sub_82174EC8", size = 8 }
+0x82176128 = { name = "sub_82176128", size = 8 }
+0x82176138 = { name = "sub_82176138", size = 8 }
+0x82176140 = { name = "sub_82176140", size = 8 }
+0x82176148 = { name = "sub_82176148", size = 8 }
+0x82176170 = { name = "sub_82176170", size = 8 }
+0x82176178 = { name = "sub_82176178", size = 8 }
+0x82176190 = { name = "sub_82176190", size = 8 }
+0x821C6470 = { name = "sub_821C6470", size = 8 }

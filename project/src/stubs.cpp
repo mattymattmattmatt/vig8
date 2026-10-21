@@ -1,251 +1,199 @@
-// Missing kernel stubs for Vigilante 8 Arcade
-// These are Xbox 360 APIs not yet implemented in the ReXGlue SDK.
-// Most are non-essential: networking, USB camera, and UI dialogs.
+// Vigilante 8 Arcade: overrides of SDK kernel imports and of recompiled game
+// functions. Each REX_EXTERN here replaces the SDK's or the generated weak
+// definition at link time (/force:multiple). Options are cvars, so they appear
+// in the F4 settings overlay and persist in the SDK's config file.
 
-#include "vig8_config.h"
-#include "settings.h"
-#include <rex/runtime/guest/context.h>
-#include <rex/runtime/guest/memory.h>
-#include <rex/kernel/kernel_state.h>
+#include "vig8_pch.h"
+#include "vig8_init.h"
+
+#include <rex/cvar.h>
+#include <rex/system/kernel_state.h>
+
+#include <algorithm>
 #include <cstring>
 
-using namespace rex::runtime::guest;
-
-// Global debug flags (set from ApplySettings in main.cpp)
-bool g_vig8_invulnerable = false;
-bool g_vig8_unlock_all_cars = false;
-
-// Per-slot sign-in state: player 1 always connected, others opt-in
-bool g_vig8_user_connected[4] = {true, false, false, false};
-
-// Simple stub macro that returns a value
-#define VIG8_STUB_RETURN(name, val) \
-    extern "C" PPC_FUNC(name) { (void)base; ctx.r3.u64 = (val); }
-
-#define VIG8_STUB(name) VIG8_STUB_RETURN(name, 0)
-
-// Networking overrides moved to net.cpp:
-//   XNetUnregisterInAddr, XNetConnect, XNetGetConnectStatus,
-//   XNetQosLookup, WSAGetOverlappedResult, and others.
-
-// XAM UI stubs
-VIG8_STUB(__imp__XamShowGamerCardUIForXUID)
-VIG8_STUB(__imp__XamShowAchievementsUI)
-VIG8_STUB(__imp__XamShowMarketplaceUI)
-VIG8_STUB_RETURN(__imp__XamUserCreateStatsEnumerator, 1)  // fail = no stats
-VIG8_STUB(__imp__XamVoiceSubmitPacket)
-
-// XamLoaderTerminateTitle / XamLoaderLaunchTitle:
-// On real hardware these return to the dashboard (exit the title).
-// Here we suppress them so a Live session failure doesn't close the app.
-// The user can close the window normally to exit.
-VIG8_STUB(__imp__XamLoaderTerminateTitle)
-VIG8_STUB(__imp__XamLoaderLaunchTitle)
-
-// Content license — override the weak wrapper sub_823245B0 to return full
-// license mask, bypassing the SDK's XamContentGetLicenseMask (which returns
-// no-license). The generated code declares sub_823245B0 as PPC_WEAK_FUNC,
-// so our strong definition takes precedence.
-// Calling convention: r3 = output pointer for mask, r4 = overlapped (ignored)
-// Returns 0 (success) in r3.
-extern "C" PPC_FUNC(sub_823245B0) {
-    uint32_t mask_ptr = ctx.r3.u32;
-    if (mask_ptr)
-        PPC_STORE_U32(mask_ptr, 0xFFFFFFFF);  // full license
-    ctx.r3.u32 = 0;  // ERROR_SUCCESS
-}
-
-// Kernel memory allocation
-VIG8_STUB(__imp__ExAllocatePoolWithTag)  // NULL = allocation failed
-
-// USB Camera stubs (XUsbcam*)
-VIG8_STUB_RETURN(__imp__XUsbcamCreate, 1)  // fail
-VIG8_STUB(__imp__XUsbcamDestroy)
-VIG8_STUB(__imp__XUsbcamGetState)
-VIG8_STUB_RETURN(__imp__XUsbcamSetConfig, 1)
-VIG8_STUB_RETURN(__imp__XUsbcamSetView, 1)
-VIG8_STUB_RETURN(__imp__XUsbcamSetCaptureMode, 1)
-VIG8_STUB_RETURN(__imp__XUsbcamReadFrame, 1)
-
-// ObReferenceObject - reference counting stub
-VIG8_STUB(__imp__ObReferenceObject)
+REXCVAR_DEFINE_UINT32(signed_in_players, 1, "Vig8",
+                      "Local profiles signed in, 1-4. Set 2-4 for split-screen.");
+REXCVAR_DEFINE_BOOL(unlock_all_cars, false, "Vig8",
+                    "Unlock every vehicle (restart the game after changing)");
 
 // ============================================================================
-// Multi-user sign-in overrides (local multiplayer support)
+// Sign-in for up to four local players
 // ============================================================================
-// The SDK only signs in user index 0. For local multiplayer the game needs all
-// 4 user indices to report as signed-in so controllers appear in the player
-// selection menu. We override the GUEST_FUNCTION_HOOK symbols — since our
-// object files link before rexkernel.lib, these definitions take precedence.
+// The SDK signs in user 0 only. Split-screen needs each player's user index to
+// report signed in, or their controller never shows up in player selection.
+// The state is 2 (signed in to Live), not 1 (local): with 1, the game's Xbox
+// Live menu item does nothing, and System Link goes through that same check.
 
-// Unique XUIDs for each local player (arbitrary but distinct)
-static const uint64_t kUserXuids[4] = {
-    0xB13EBABEBABE0001ULL,
-    0xB13EBABEBABE0002ULL,
-    0xB13EBABEBABE0003ULL,
-    0xB13EBABEBABE0004ULL,
-};
-
-static const char* kUserNames[4] = {
-    "Player 1", "Player 2", "Player 3", "Player 4"
-};
-
-// XamUserGetSigninState(user_index) -> signin_state
-// Return 2 (signed in online / Xbox Live) for connected user indices.
-// Returning 1 (local only) causes the Live game button to do nothing
-// because the game checks for state == 2 before entering the online lobby.
-extern "C" PPC_FUNC(__imp__XamUserGetSigninState) {
-    uint32_t user_index = ctx.r3.u32;
-    ctx.r3.u64 = (user_index < 4 && g_vig8_user_connected[user_index]) ? 2 : 0;
+static bool UserSignedIn(uint32_t user) {
+  return user < std::min<uint32_t>(REXCVAR_GET(signed_in_players), 4);
 }
 
-// XamUserGetSigninInfo(user_index, flags, info_ptr) -> HRESULT
-// X_USER_SIGNIN_INFO layout (40 bytes, big-endian):
-//   +0  uint64_t xuid
-//   +8  uint32_t unk08
-//   +12 uint32_t signin_state
-//   +16 uint32_t unk10
-//   +20 uint32_t unk14
-//   +24 char     name[16]
-extern "C" PPC_FUNC(__imp__XamUserGetSigninInfo) {
-    uint32_t user_index = ctx.r3.u32;
-    // r4 = flags (unused)
-    uint32_t info_ptr = ctx.r5.u32;
+static constexpr uint64_t kXuidBase = 0xB13EBABEBABE0001ULL;  // + user index
+static const char* const kUserNames[4] = {"Player 1", "Player 2", "Player 3", "Player 4"};
+static constexpr uint32_t kInvalidArg = 0x80070057;
+static constexpr uint32_t kNoSuchUser = 0x80070490;
 
-    if (!info_ptr) {
-        ctx.r3.u64 = 0x80070057;  // X_E_INVALIDARG
-        return;
-    }
-
-    // Zero the struct
-    std::memset(base + info_ptr, 0, 40);
-
-    if (user_index >= 4 || !g_vig8_user_connected[user_index]) {
-        ctx.r3.u64 = 0x80070490;  // X_E_NO_SUCH_USER
-        return;
-    }
-
-    PPC_STORE_U64(info_ptr + 0, kUserXuids[user_index]);
-    PPC_STORE_U32(info_ptr + 12, 2);  // signin_state = signed in online (Xbox Live)
-    // Copy name (raw bytes, not endian-swapped)
-    const char* name = kUserNames[user_index];
-    std::memcpy(base + info_ptr + 24, name, std::strlen(name) + 1);
-
-    ctx.r3.u64 = 0;  // X_E_SUCCESS
+REX_EXTERN(__imp__XamUserGetSigninState) {
+  (void)base;
+  ctx.r3.u64 = UserSignedIn(ctx.r3.u32) ? 2 : 0;
 }
 
-// XamUserGetXUID(user_index, type_mask, xuid_ptr) -> HRESULT
-extern "C" PPC_FUNC(__imp__XamUserGetXUID) {
-    uint32_t user_index = ctx.r3.u32;
-    // r4 = type_mask (unused — we always return the xuid)
-    uint32_t xuid_ptr = ctx.r5.u32;
-
-    if (!xuid_ptr) {
-        ctx.r3.u64 = 0x80070057;  // X_E_INVALIDARG
-        return;
-    }
-
-    if (user_index >= 4 || !g_vig8_user_connected[user_index]) {
-        PPC_STORE_U64(xuid_ptr, 0);
-        ctx.r3.u64 = (user_index >= 4) ? 0x80070057 : 0x80070490;
-        return;
-    }
-
-    PPC_STORE_U64(xuid_ptr, kUserXuids[user_index]);
-    ctx.r3.u64 = 0;  // X_E_SUCCESS
+// X_USER_SIGNIN_INFO, 40 bytes: xuid +0, signin_state +12, name[16] +24.
+REX_EXTERN(__imp__XamUserGetSigninInfo) {
+  uint32_t user = ctx.r3.u32, info = ctx.r5.u32;
+  if (!info) {
+    ctx.r3.u64 = kInvalidArg;
+    return;
+  }
+  std::memset(base + info, 0, 40);
+  if (!UserSignedIn(user)) {
+    ctx.r3.u64 = kNoSuchUser;
+    return;
+  }
+  REX_STORE_U64(info + 0, kXuidBase + user);
+  REX_STORE_U32(info + 12, 2);
+  std::memcpy(base + info + 24, kUserNames[user], std::strlen(kUserNames[user]) + 1);
+  ctx.r3.u64 = 0;
 }
 
-// XamUserGetName(user_index, buffer, buffer_len) -> result
-extern "C" PPC_FUNC(__imp__XamUserGetName) {
-    uint32_t user_index = ctx.r3.u32;
-    uint32_t buffer_ptr = ctx.r4.u32;
-    uint32_t buffer_len = ctx.r5.u32;
-
-    if (user_index >= 4 || !g_vig8_user_connected[user_index]) {
-        ctx.r3.u64 = (user_index >= 4) ? 0x80070057 : 0x80070490;
-        return;
-    }
-
-    const char* name = kUserNames[user_index];
-    uint32_t copy_len = std::min(buffer_len, (uint32_t)(std::strlen(name) + 1));
-    if (buffer_ptr && copy_len > 0) {
-        std::memcpy(base + buffer_ptr, name, copy_len);
-        // Ensure null termination
-        *(base + buffer_ptr + copy_len - 1) = 0;
-    }
-
-    ctx.r3.u64 = 0;  // X_E_SUCCESS
+REX_EXTERN(__imp__XamUserGetXUID) {
+  uint32_t user = ctx.r3.u32, xuid = ctx.r5.u32;
+  if (!xuid) {
+    ctx.r3.u64 = kInvalidArg;
+    return;
+  }
+  bool in = UserSignedIn(user);
+  REX_STORE_U64(xuid, in ? kXuidBase + user : 0);
+  ctx.r3.u64 = in ? 0 : (user >= 4 ? kInvalidArg : kNoSuchUser);
 }
 
-// XamUserCheckPrivilege(user_index, mask, out_value) -> result
-extern "C" PPC_FUNC(__imp__XamUserCheckPrivilege) {
-    uint32_t user_index = ctx.r3.u32;
-    // r4 = mask (unused)
-    uint32_t out_ptr = ctx.r5.u32;
-
-    if (user_index != 0xFF && user_index >= 4) {
-        ctx.r3.u64 = 0x80070057;  // X_E_INVALIDARG
-        return;
-    }
-
-    // Grant all privileges — write TRUE (1) to pfGranted output
-    if (out_ptr) PPC_STORE_U32(out_ptr, 1);
-    ctx.r3.u64 = 0;  // X_ERROR_SUCCESS
+REX_EXTERN(__imp__XamUserGetName) {
+  uint32_t user = ctx.r3.u32, buf = ctx.r4.u32, len = ctx.r5.u32;
+  if (!UserSignedIn(user)) {
+    ctx.r3.u64 = user >= 4 ? kInvalidArg : kNoSuchUser;
+    return;
+  }
+  uint32_t n = std::min<uint32_t>(len, uint32_t(std::strlen(kUserNames[user]) + 1));
+  if (buf && n) {
+    std::memcpy(base + buf, kUserNames[user], n);
+    base[buf + n - 1] = 0;
+  }
+  ctx.r3.u64 = 0;
 }
 
-// XamUserGetMembershipTier(user_index) -> tier
-extern "C" PPC_FUNC(__imp__XamUserGetMembershipTier) {
-    uint32_t user_index = ctx.r3.u32;
-    if (user_index >= 4) {
-        ctx.r3.u64 = 0x80070057;
-        return;
-    }
-    ctx.r3.u64 = 6;  // Gold
+// Every privilege granted (online play, communications), so System Link and the
+// Live menu open.
+REX_EXTERN(__imp__XamUserCheckPrivilege) {
+  uint32_t user = ctx.r3.u32, out = ctx.r5.u32;
+  if (user != 0xFF && user >= 4) {
+    ctx.r3.u64 = kInvalidArg;
+    return;
+  }
+  if (out) REX_STORE_U32(out, 1);
+  ctx.r3.u64 = 0;
 }
 
-// XamShowSigninUI(unk, unk_mask) -> result
-// Broadcast sign-in changed with connected users bitmask.
-extern "C" PPC_FUNC(__imp__XamShowSigninUI) {
-    (void)base;
-    auto* ks = rex::kernel::kernel_state();
-    if (ks) {
-        uint32_t mask = 0;
-        for (int i = 0; i < 4; i++)
-            if (g_vig8_user_connected[i]) mask |= (1u << i);
-        // XN_SYS_SIGNINCHANGED
-        ks->BroadcastNotification(0x0000000A, mask);
-        // XN_SYS_UI off
-        ks->BroadcastNotification(0x00000009, 0);
-    }
-    ctx.r3.u64 = 0;  // X_ERROR_SUCCESS
+REX_EXTERN(__imp__XamUserGetMembershipTier) {
+  (void)base;
+  ctx.r3.u64 = ctx.r3.u32 < 4 ? 6 /*Gold*/ : kInvalidArg;
 }
 
-// XamUserIsOnlineEnabled(user_index) -> bool
-extern "C" PPC_FUNC(__imp__XamUserIsOnlineEnabled) {
-    (void)base;
-    ctx.r3.u64 = 1;
+REX_EXTERN(__imp__XamUserIsOnlineEnabled) {
+  (void)base;
+  ctx.r3.u64 = 1;
+}
+
+// The SDK's version reports one user; this reports every signed-in slot.
+REX_EXTERN(__imp__XamShowSigninUI) {
+  (void)base;
+  uint32_t mask = 0;
+  for (uint32_t i = 0; i < 4; i++)
+    if (UserSignedIn(i)) mask |= 1u << i;
+  REX_KERNEL_STATE()->BroadcastNotification(0x0000000A /*XN_SYS_SIGNINCHANGED*/, mask);
+  REX_KERNEL_STATE()->BroadcastNotification(0x00000009 /*XN_SYS_UI off*/, 0);
+  ctx.r3.u64 = 0;
 }
 
 // ============================================================================
-// Vehicle unlock override
+// Don't quit to a dashboard that isn't there
 // ============================================================================
-// sub_821B80F0 reads vehicle data structures. At offset 196, bits 12-15
-// (mask 0xF0000) indicate the vehicle is unlocked. If those bits are 0,
-// the vehicle is locked (skipped). We override the weak symbol to force
-// those bits set before calling the original implementation.
+// When an Xbox Live session fails, the game calls these to return to the
+// dashboard; the SDK's versions end the process. Ignoring them leaves the game
+// on its error screen, from which the player can back out.
+REX_EXTERN(__imp__XamLoaderTerminateTitle) {
+  (void)base;
+  ctx.r3.u64 = 0;
+}
+REX_EXTERN(__imp__XamLoaderLaunchTitle) {
+  (void)base;
+  ctx.r3.u64 = 0;
+}
 
-// Forward-declare the generated implementation
-extern "C" void __imp__sub_821B80F0(PPCContext& ctx, uint8_t* base);
+// ============================================================================
+// Unlock all vehicles
+// ============================================================================
+// sub_821B80F0 reads a vehicle record; bits 16-19 of the word at +196 (mask
+// 0xF0000) are its unlock state, and zero means locked. Setting them before the
+// original runs makes every vehicle selectable.
+REX_EXTERN(sub_821B80F0) {
+  if (REXCVAR_GET(unlock_all_cars) && ctx.r3.u32) {
+    uint32_t p = ctx.r3.u32 + 196;
+    REX_STORE_U32(p, REX_LOAD_U32(p) | 0xF0000);
+  }
+  __imp__sub_821B80F0(ctx, base);
+}
 
-extern "C" PPC_FUNC(sub_821B80F0) {
-    if (g_vig8_unlock_all_cars) {
-        uint32_t struct_ptr = ctx.r3.u32;
-        if (struct_ptr) {
-            uint32_t val = PPC_LOAD_U32(struct_ptr + 196);
-            val |= 0xF0000;  // force bits 12-15 set = unlocked
-            PPC_STORE_U32(struct_ptr + 196, val);
-        }
+// ============================================================================
+// Scripted controller for unattended test runs
+// ============================================================================
+// VIG8_AUTOPLAY=1 taps A for 200 ms every 3 s (after the first 10 s) on top of
+// whatever the real pad reports, which walks the menus into a race with the
+// default picks. VIG8_AUTOPLAY_DRIVE=<s> stops the taps after that many seconds
+// and drives instead: right trigger held, steering slowly side to side, A
+// (fire) every 2 s. Unset, this is a plain pass-through to the SDK. It works
+// without window focus, which the SDK otherwise needs before it reports input.
+// ponytail: one fixed script; a button@time list when a test needs other menus.
+#include <rex/input/input_system.h>
+#include <rex/runtime.h>
+
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+
+REX_EXTERN(__imp__XamInputGetState) {
+  uint32_t user = ctx.r3.u32, flags = ctx.r4.u32, state_ptr = ctx.r5.u32;
+  if ((flags & 0xFF) && (flags & 1 /*XINPUT_FLAG_GAMEPAD*/) == 0) {
+    ctx.r3.u64 = 0x48F;  // X_ERROR_DEVICE_NOT_CONNECTED
+    return;
+  }
+  if ((user & 0xFF) == 0xFF || (flags & 0x40000000 /*XINPUT_FLAG_ANY_USER*/)) user = 0;
+  auto* is = static_cast<rex::input::InputSystem*>(REX_KERNEL_STATE()->emulator()->input_system());
+  auto* state = state_ptr ? REX_KERNEL_MEMORY()->TranslateVirtual<rex::input::X_INPUT_STATE*>(state_ptr)
+                          : nullptr;
+  uint32_t result = is->GetState(user, state);
+
+  static const char* autoplay = std::getenv("VIG8_AUTOPLAY");
+  if (autoplay && autoplay[0] == '1' && user == 0 && state) {
+    using clock = std::chrono::steady_clock;
+    static const auto start = clock::now();
+    static std::atomic<uint32_t> packet{1};
+    static const long long drive_ms = [] {
+      const char* v = std::getenv("VIG8_AUTOPLAY_DRIVE");
+      return v ? std::atoll(v) * 1000 : -1;
+    }();
+    long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - start).count();
+    if (result != 0) std::memset(state, 0, sizeof(*state));
+    auto& pad = state->gamepad;
+    if (drive_ms >= 0 && ms > drive_ms) {
+      pad.right_trigger = 255;
+      pad.thumb_lx = int16_t(12000 * std::sin(double(ms - drive_ms) / 2500.0));
+      if ((ms - drive_ms) % 2000 < 200) pad.buttons = uint16_t(pad.buttons | 0x1000);  // A
+    } else if (ms > 10000 && ms % 3000 < 200) {
+      pad.buttons = uint16_t(pad.buttons | 0x1000);  // A
     }
-    // Call original implementation
-    __imp__sub_821B80F0(ctx, base);
+    state->packet_number = packet.fetch_add(1);  // the game acts only on a new packet
+    result = 0;
+  }
+  ctx.r3.u64 = result;
 }
