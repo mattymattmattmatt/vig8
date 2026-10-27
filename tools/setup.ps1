@@ -9,7 +9,8 @@
 
 param(
     [switch]$Yes,          # install missing tools without asking
-    [string]$Game = ''     # extracted folder with default.xex, the XBLA package, or a folder holding it
+    [string]$Game = '',    # extracted folder with default.xex, the XBLA package, or a folder holding it
+    [switch]$Vr            # also build the OpenXR loader and use the VR branch of the SDK fork
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,10 +20,21 @@ $Data = Join-Path $Root 'extracted'
 $Llvm = 'C:\Program Files\LLVM\bin'
 
 # Pinned sources. Bump these together with the CHANGELOG.
+# Flat builds stay on sp00nznet/rexglue-sdk. -Vr checks out this fork's VR
+# commit, which adds the optional D3D12 bridge, and builds the OpenXR loader.
+# If that commit is not on the fork yet, the same change is applied from
+# tools\rexglue-vr-bridge.patch onto d50d599.
 $Sdk = Join-Path $Root 'tools\rexglue-sdk'
 $SdkRepo = 'https://github.com/sp00nznet/rexglue-sdk'
 $SdkCommit = 'd50d599'   # sp00nznet/rexglue-sdk: upstream development@bd833a2 + our fixes
+$SdkVrCommit = '82dbebf6a1da337d85ae93ae918835d8ea33e32b'  # mattymattmattmatt/rexglue-sdk cursor/openxr-vr-bridge-095c
+if ($Vr) {
+    $SdkRepo = 'https://github.com/mattymattmattmatt/rexglue-sdk'
+    $SdkCommit = $SdkVrCommit
+}
 $SdkInstall = Join-Path $Sdk 'out\install\win-amd64'
+$OpenXr = Join-Path $Root 'tools\openxr-sdk'
+$OpenXrCommit = '24a1f2b'   # KhronosGroup/OpenXR-SDK release-1.1.65
 $Xlive = Join-Path $Root 'tools\xlive'
 $XliveCommit = '0632994'
 $Tools360 = Join-Path $Root 'tools\360tools'
@@ -50,8 +62,42 @@ function Ask($q) { $Yes -or ((Read-Host "$q [y/N]") -match '^[yY]') }
 function Clone($url, $dir, $commit) {
     if (-not (Test-Path (Join-Path $dir '.git'))) {
         Run "Cloning $url" { git -c core.longpaths=true clone $url $dir }
+    } else {
+        Run "Pointing $dir at $url" { git -C $dir remote set-url origin $url }
     }
-    Run "Checking out $commit" { git -C $dir fetch --quiet origin; git -C $dir checkout --quiet $commit }
+    # A full SHA may live only on a side branch. GitHub will serve that object
+    # directly; a short pin is fetched with the remote's default branch.
+    if ($commit -match '^[0-9a-fA-F]{40}$') {
+        Run "Checking out $commit" { git -C $dir fetch --quiet origin $commit; git -C $dir checkout --quiet $commit }
+    } else {
+        Run "Checking out $commit" { git -C $dir fetch --quiet origin; git -C $dir checkout --quiet $commit }
+    }
+}
+# -Vr prefers the fork commit. Until that object is on the remote, check out
+# the saintsrow pin and apply the bridge patch shipped in this repo. The
+# result is the same tree as the commit.
+function Checkout-VrSdk($url, $dir, $commit) {
+    if (-not (Test-Path (Join-Path $dir '.git'))) {
+        Run "Cloning $url" { git -c core.longpaths=true clone $url $dir }
+    } else {
+        Run "Pointing $dir at $url" { git -C $dir remote set-url origin $url }
+    }
+    $ErrorActionPreference = 'Continue'
+    & git -C $dir fetch --quiet origin $commit *>> $Log
+    $fetched = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = 'Stop'
+    if ($fetched) {
+        Run "Checking out $commit" { git -C $dir checkout -f --quiet $commit }
+        return
+    }
+    Write-Host "   $commit is not on the fork. Using d50d599 plus tools\rexglue-vr-bridge.patch"
+    "VR commit $commit was not on the fork; applying tools/rexglue-vr-bridge.patch onto d50d599" |
+        Out-File $Log -Append -Encoding utf8
+    Run "Checking out d50d599" { git -C $dir fetch --quiet origin; git -C $dir checkout -f --quiet d50d599 }
+    Remove-Item (Join-Path $dir 'include\rex\graphics\vr_bridge.h') -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $dir 'src\core\vr_bridge.cpp') -Force -ErrorAction SilentlyContinue
+    $patch = Join-Path $Root 'tools\rexglue-vr-bridge.patch'
+    Run 'Applying the VR bridge patch' { git -C $dir apply $patch }
 }
 # An Xbox 360 content package starts with LIVE, PIRS or "CON ".
 function Test-Package($file) {
@@ -120,10 +166,10 @@ if (-not (Test-Path (Join-Path $Data 'default.xex'))) {
 Write-Host "   $Data"
 
 # --- 3. ReXGlue SDK -----------------------------------------------------------
-Step 'ReXGlue SDK (the first build takes 10-20 minutes)'
+Step $(if ($Vr) { 'ReXGlue SDK, VR branch (the first build takes 10-20 minutes)' } else { 'ReXGlue SDK (the first build takes 10-20 minutes)' })
 $sdkStamp = Join-Path $SdkInstall 'commit.txt'
 if (-not ((Test-Path $sdkStamp) -and ((Get-Content $sdkStamp) -eq $SdkCommit))) {
-    Clone $SdkRepo $Sdk $SdkCommit
+    if ($Vr) { Checkout-VrSdk $SdkRepo $Sdk $SdkCommit } else { Clone $SdkRepo $Sdk $SdkCommit }
     Run 'Fetching SDK submodules' { git -C $Sdk -c core.longpaths=true submodule update --init --recursive }
     Push-Location $Sdk
     try {
@@ -134,6 +180,24 @@ if (-not ((Test-Path $sdkStamp) -and ((Get-Content $sdkStamp) -eq $SdkCommit))) 
         Run 'Installing the SDK' { cmake --install out/build/win-amd64 --config Release --prefix out/install/win-amd64 }
     } finally { Pop-Location }
     Set-Content $sdkStamp $SdkCommit
+}
+if ($Vr) {
+    Write-Host '   OpenXR loader (Khronos OpenXR-SDK 1.1.65)'
+    $loader = Get-ChildItem $OpenXr -Recurse -Filter openxr_loader.dll -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match '\\build\\' } | Select-Object -First 1
+    if (-not $loader) {
+        if (-not (Test-Path (Join-Path $OpenXr '.git'))) {
+            Run 'Cloning the OpenXR SDK' {
+                git -c core.longpaths=true clone --branch release-1.1.65 --depth 1 https://github.com/KhronosGroup/OpenXR-SDK $OpenXr
+            }
+        }
+        Run 'Checking out the OpenXR SDK' { git -C $OpenXr checkout --quiet $OpenXrCommit }
+        $build = Join-Path $OpenXr 'build'
+        Run 'Configuring the OpenXR loader' {
+            cmake -S $OpenXr -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DDYNAMIC_LOADER=ON -DBUILD_TESTS=OFF -DBUILD_CONFORMANCE_TESTS=OFF -DBUILD_API_LAYERS=OFF -DBUILD_SDK_TESTS=OFF
+        }
+        Run 'Building the OpenXR loader' { cmake --build $build }
+    }
 }
 
 # --- 4. xlive relay client ----------------------------------------------------
@@ -156,5 +220,17 @@ try {
 Step 'Writing Play.cmd'
 "@echo off`r`nstart `"`" `"%~dp0project\build\vig8.exe`" %*`r`n" |
     Set-Content -Path (Join-Path $Root 'Play.cmd') -Encoding ascii -NoNewline
+if ($Vr) {
+    $dll = Get-ChildItem $OpenXr -Recurse -Filter openxr_loader.dll -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match '\\build\\' } | Select-Object -First 1
+    if (-not $dll) { Fail 'openxr_loader.dll was not built. See setup.log.' }
+    Copy-Item $dll.FullName (Join-Path $Root 'project\build\openxr_loader.dll') -Force
+    "@echo off`r`nstart `"`" `"%~dp0project\build\vig8.exe`" --vr %*`r`n" |
+        Set-Content -Path (Join-Path $Root 'PlayVR.cmd') -Encoding ascii -NoNewline
+}
 Write-Host ''
-Write-Host 'Done. Double-click Play.cmd to start the game.' -ForegroundColor Green
+if ($Vr) {
+    Write-Host 'Done. Double-click PlayVR.cmd (or Play.cmd --vr) with the headset runtime already running.' -ForegroundColor Green
+} else {
+    Write-Host 'Done. Double-click Play.cmd to start the game.' -ForegroundColor Green
+}

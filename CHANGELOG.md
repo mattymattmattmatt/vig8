@@ -6,6 +6,16 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Optional VR for a Quest through Virtual Desktop (or any OpenXR runtime with
+  `XR_KHR_D3D12_enable`). `Setup.cmd -Vr` checks out the VR commit of
+  [mattymattmattmatt/rexglue-sdk](https://github.com/mattymattmattmatt/rexglue-sdk)
+  (`82dbebf`, branch `cursor/openxr-vr-bridge-095c`) and builds the Khronos OpenXR loader.
+  If that commit is not on the fork yet, setup applies `tools/rexglue-vr-bridge.patch` onto
+  `d50d599` instead. `Play.cmd --vr` or `PlayVR.cmd` turns it on. Flat setup is unchanged.
+  See [docs/vr.md](docs/vr.md). Not run against the game or a headset in this change.
+
 ## [0.1.0] - 2026-10-20
 
 First release: the game rebuilt on ReXGlue 0.10. Single player runs through to battles; multiplayer
