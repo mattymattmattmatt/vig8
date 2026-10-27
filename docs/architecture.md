@@ -15,6 +15,7 @@ Four parts; everything below the first line is built on your machine:
   project/src/main.cpp ───────────────┤
   project/src/stubs.cpp ──────────────┤
   project/src/net.cpp + tools/xlive ──┤
+  project/src/vr/  (optional OpenXR) ─┤
                                       ▼
                              project/build/vig8.exe ──links──> rexruntime.dll + rexgpu-xenos.dll
                                                                (ReXGlue: kernel, XAM, D3D12, audio, input)
@@ -49,6 +50,12 @@ the game, and unlocks vehicles on request.
 
 **`net.cpp`.** System Link and relay play; see [networking.md](networking.md).
 
+**`src/vr/`.** Optional headset rendering. It is compiled into every build and does nothing
+unless `--vr` is passed and an OpenXR session is running. `vr_hooks.cpp` overrides the game's
+render, view, projection, HUD and resolve functions the same way `stubs.cpp` does. The OpenXR
+session is built only when Setup was run with `-Vr` (or `OPENXR_SDK` points at the Khronos
+headers); otherwise `--vr` stays on the flat window and says so in the log. See [vr.md](vr.md).
+
 ## Settings
 
 vig8's options are SDK cvars, so they appear in the F4 overlay under **Vig8** and are saved with
@@ -62,6 +69,7 @@ the SDK's own to `project\build\vig8.toml`. Any cvar can also be given on the co
 | `lan_port`, `relay_host`, `relay_port` | | See networking.md. |
 | `license_mask` (SDK) | set to full by vig8 | `0` plays the XBLA trial. |
 | `mnk_mode` (SDK) | on, set by vig8 | Keyboard as controller 1. |
+| `vr` and the other `vr_*` cvars | off | Headset rendering. Listed in [vr.md](vr.md). |
 
 ## The game
 

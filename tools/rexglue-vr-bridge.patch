@@ -1,0 +1,366 @@
+diff --git a/README.md b/README.md
+index dd2afeb..aaff938 100644
+--- a/README.md
++++ b/README.md
+@@ -19,9 +19,12 @@
+ > | Build libmspack from its real sources, not the symlinks (#1) | `cabextract/mspack/` is git symlinks; a Windows clone without symlink support gets one-line text files and `lzxd.c` doesn't compile. |
+ > | Build the `XUsbcam` exports (#2) | `xboxkrnl_usbcam.cpp` was left out of the build, so a title importing the Vision camera API (Vigilante 8 Arcade) doesn't link. |
+ >
+-> It does **not** add: new features, API changes, platform support, or anything Saints Row-specific beyond the
+-> dispatch-header workaround above. The rest of this README is upstream's, unchanged. The licence is
+-> upstream's BSD-3-Clause ([LICENSE](LICENSE)).
++> **Branch `cursor/openxr-vr-bridge-095c`** is the `saintsrow` pin above plus one optional feature: a VR bridge (`include/rex/graphics/vr_bridge.h`). The D3D12 device can be created on an adapter a game callback names, and the Xenos plugin reports the presented guest texture and vertex-shader float constants. Nothing calls the bridge unless a game registers one, so a flat build behaves as `saintsrow`. Vigilante 8 Arcade's `--vr` path is the consumer. It is not offered upstream: the ReXGlue maintainers have asked not to receive AI-assisted pull requests.
++>
++> On `saintsrow` that is the whole fork: no new features, API changes, or platform support, and nothing
++> Saints Row-specific beyond the dispatch-header workaround above. The VR branch is the one exception, and
++> it stays dormant until a game registers the bridge. The rest of this README is upstream's, unchanged.
++> The licence is upstream's BSD-3-Clause ([LICENSE](LICENSE)).
+ 
+ > [!CAUTION]
+ > This project is in early development. Expect things to not work quite right and there to be significant changes and breaking public API updates as development progresses. Contributions and feedback are welcome, but please be aware that the codebase is still evolving rapidly.
+diff --git a/include/rex/graphics/vr_bridge.h b/include/rex/graphics/vr_bridge.h
+new file mode 100644
+index 0000000..a0796b8
+--- /dev/null
++++ b/include/rex/graphics/vr_bridge.h
+@@ -0,0 +1,95 @@
++/**
++ * @file        rex/graphics/vr_bridge.h
++ * @brief       Optional callbacks the D3D12 GPU plugin makes while a VR session is active
++ *
++ * @copyright   Copyright (c) 2026
++ * @license     BSD 3-Clause License — see LICENSE in the project root.
++ *
++ * The bridge is inert until a game calls SetBridge. Flat rendering does not
++ * consult it. Types are void* so this header does not include d3d12.h; the
++ * game and the D3D12 backend cast them to ID3D12Device, ID3D12CommandQueue
++ * and ID3D12Resource.
++ *
++ * One instance lives in rexruntime.dll. The GPU plugin and the game both call
++ * these functions, so the state is not an inline header static.
++ */
++
++#pragma once
++
++#include <cstdint>
++
++namespace rex::graphics::vr {
++
++/// Packed vertex-shader float constants about to be uploaded for one draw.
++/// `values` is `count` float4s. `indices[i]` is the guest constant register
++/// (0-255) that float4 came from.
++struct VertexConstantSpan {
++  float* values = nullptr;
++  const uint16_t* indices = nullptr;
++  uint32_t count = 0;
++};
++
++/// Guest output image, after the frame's draws have been submitted to `queue`.
++/// `resource` is the presenter's UAV-capable texture in
++/// D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE (R10G10B10A2_UNORM). `fence` is
++/// the direct queue's submission fence, and `submission` is the value that
++/// queue has already been asked to signal for this frame (the signal is
++/// queued, not necessarily complete). The callback may record more commands
++/// on `queue`; it must put `resource` back in
++/// D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE before returning. It must not
++/// wait on the CPU for `fence`.
++struct PresentInfo {
++  void* device = nullptr;
++  void* command_queue = nullptr;
++  void* fence = nullptr;
++  void* resource = nullptr;
++  uint32_t width = 0;
++  uint32_t height = 0;
++  uint64_t submission = 0;
++};
++
++/// What the presented image contains. The game sets this before the swap.
++enum class FrameLayout : uint32_t {
++  kMono = 0,       ///< Whole image, flat.
++  kSideBySide = 1, ///< Left eye in x=[0,width/2), right eye in the other half.
++  kAlternate = 2,  ///< Whole image is one eye; see SetEye.
++  kTheater = 3,    ///< Whole image, show it on a headset quad.
++};
++
++struct Bridge {
++  /// Return true to force the DXGI adapter. `min_feature_level` is a
++  /// D3D_FEATURE_LEVEL value (0xb000 = 11_0). Called before the device exists.
++  bool (*select_adapter)(uint32_t* luid_low, int32_t* luid_high, uint32_t* min_feature_level,
++                         void* userdata) = nullptr;
++
++  /// Device and direct queue are live. Create the OpenXR session here.
++  void (*on_d3d12_device)(void* device, void* queue, void* userdata) = nullptr;
++
++  /// Rewrite vertex-shader constants for this draw. Return true if any value
++  /// changed. Only called when PatchEveryDraw() is set.
++  bool (*patch_vertex_constants)(VertexConstantSpan span, uint32_t eye, void* userdata) = nullptr;
++
++  /// A guest frame was submitted to the direct queue. May be called on the
++  /// GPU thread.
++  void (*on_present)(const PresentInfo& info, void* userdata) = nullptr;
++
++  void* userdata = nullptr;
++};
++
++/// `bridge` must outlive the session. Pass null to clear. Safe to call before
++/// any GPU thread starts; afterwards only from the thread that presents.
++void SetBridge(const Bridge* bridge);
++const Bridge* GetBridge();
++
++void SetEye(uint32_t eye);
++uint32_t GetEye();
++
++void SetFrameLayout(FrameLayout layout);
++FrameLayout GetFrameLayout();
++
++/// When true, every draw re-uploads vertex float constants and calls
++/// patch_vertex_constants. Default false, which leaves the upload cache alone.
++void SetPatchEveryDraw(bool enabled);
++bool PatchEveryDraw();
++
++}  // namespace rex::graphics::vr
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 1ddafd0..bd1c70e 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -21,6 +21,7 @@ add_library(rexcore OBJECT
+     timer_queue.cpp
+     utf8.cpp
+     vec128.cpp
++    vr_bridge.cpp
+ )
+ add_library(rex::core ALIAS rexcore)
+ 
+diff --git a/src/core/vr_bridge.cpp b/src/core/vr_bridge.cpp
+new file mode 100644
+index 0000000..05468c9
+--- /dev/null
++++ b/src/core/vr_bridge.cpp
+@@ -0,0 +1,55 @@
++/**
++ * @file        core/vr_bridge.cpp
++ * @brief       Process-wide VR bridge state, linked into rexruntime.dll
++ *
++ * @copyright   Copyright (c) 2026
++ * @license     BSD 3-Clause License — see LICENSE in the project root.
++ */
++
++#include <rex/graphics/vr_bridge.h>
++
++#include <atomic>
++
++namespace rex::graphics::vr {
++namespace {
++
++std::atomic<const Bridge*> g_bridge{nullptr};
++std::atomic<uint32_t> g_eye{0};
++std::atomic<uint32_t> g_layout{static_cast<uint32_t>(FrameLayout::kMono)};
++std::atomic<bool> g_patch{false};
++
++}  // namespace
++
++void SetBridge(const Bridge* bridge) {
++  g_bridge.store(bridge, std::memory_order_release);
++}
++
++const Bridge* GetBridge() {
++  return g_bridge.load(std::memory_order_acquire);
++}
++
++void SetEye(uint32_t eye) {
++  g_eye.store(eye, std::memory_order_release);
++}
++
++uint32_t GetEye() {
++  return g_eye.load(std::memory_order_acquire);
++}
++
++void SetFrameLayout(FrameLayout layout) {
++  g_layout.store(static_cast<uint32_t>(layout), std::memory_order_release);
++}
++
++FrameLayout GetFrameLayout() {
++  return static_cast<FrameLayout>(g_layout.load(std::memory_order_acquire));
++}
++
++void SetPatchEveryDraw(bool enabled) {
++  g_patch.store(enabled, std::memory_order_release);
++}
++
++bool PatchEveryDraw() {
++  return g_patch.load(std::memory_order_acquire);
++}
++
++}  // namespace rex::graphics::vr
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 19874a5..0a3b115 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -21,6 +21,7 @@
+ #include <rex/perf/counter.h>
+ #include <rex/graphics/d3d12/command_processor.h>
+ #include <rex/graphics/d3d12/graphics_system.h>
++#include <rex/graphics/vr_bridge.h>
+ #include <rex/graphics/d3d12/shader.h>
+ #include <rex/graphics/flags.h>
+ #include <rex/graphics/registers.h>
+@@ -2248,6 +2249,22 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbu
+         // queue.
+         SubmitBarriers();
+         EndSubmission(true);
++        // The VR bridge copies this image onto an OpenXR swapchain on the same
++        // queue. Null unless the game enabled VR. The resource stays in
++        // kGuestOutputInternalState across the call.
++        if (const ::rex::graphics::vr::Bridge* vr_bridge = ::rex::graphics::vr::GetBridge()) {
++          if (vr_bridge->on_present) {
++            ::rex::graphics::vr::PresentInfo info;
++            info.device = device;
++            info.command_queue = provider.GetDirectQueue();
++            info.fence = submission_fence_;
++            info.resource = guest_output_resource;
++            info.width = guest_output_width;
++            info.height = guest_output_height;
++            info.submission = submission_current_ == 0 ? 0 : submission_current_ - 1;
++            vr_bridge->on_present(info, vr_bridge->userdata);
++          }
++        }
+         return true;
+       });
+ 
+@@ -4101,7 +4118,9 @@ bool D3D12CommandProcessor::UpdateBindings(const D3D12Shader* vertex_shader,
+     cbuffer_binding_system_.up_to_date = true;
+     current_graphics_root_up_to_date_ &= ~(1u << root_parameter_system_constants);
+   }
+-  if (!cbuffer_binding_float_vertex_.up_to_date) {
++  // PatchEveryDraw is false unless a VR session asked to rewrite view and
++  // projection constants. The upload cache is unchanged when it is false.
++  if (!cbuffer_binding_float_vertex_.up_to_date || ::rex::graphics::vr::PatchEveryDraw()) {
+     // Even if the shader doesn't need any float constants, a valid binding must
+     // still be provided, so if the first draw in the frame with the current
+     // root signature doesn't have float constants at all, still allocate an
+@@ -4113,6 +4132,9 @@ bool D3D12CommandProcessor::UpdateBindings(const D3D12Shader* vertex_shader,
+     if (float_constants == nullptr) {
+       return false;
+     }
++    uint16_t vr_constant_indices[256];
++    uint32_t vr_constant_count = 0;
++    float* vr_constant_base = reinterpret_cast<float*>(float_constants);
+     for (uint32_t i = 0; i < 4; ++i) {
+       uint64_t float_constant_map_entry = float_constant_map_vertex.float_bitmap[i];
+       uint32_t float_constant_index;
+@@ -4122,9 +4144,25 @@ bool D3D12CommandProcessor::UpdateBindings(const D3D12Shader* vertex_shader,
+             float_constants,
+             &regs[XE_GPU_REG_SHADER_CONSTANT_000_X + (i << 8) + (float_constant_index << 2)],
+             4 * sizeof(float));
++        if (vr_constant_count < 256) {
++          vr_constant_indices[vr_constant_count++] =
++              static_cast<uint16_t>((i << 6) + float_constant_index);
++        }
+         float_constants += 4 * sizeof(float);
+       }
+     }
++    if (::rex::graphics::vr::PatchEveryDraw() && vr_constant_count != 0) {
++      if (const ::rex::graphics::vr::Bridge* vr_bridge = ::rex::graphics::vr::GetBridge()) {
++        if (vr_bridge->patch_vertex_constants) {
++          ::rex::graphics::vr::VertexConstantSpan span;
++          span.values = vr_constant_base;
++          span.indices = vr_constant_indices;
++          span.count = vr_constant_count;
++          vr_bridge->patch_vertex_constants(span, ::rex::graphics::vr::GetEye(),
++                                            vr_bridge->userdata);
++        }
++      }
++    }
+     cbuffer_binding_float_vertex_.up_to_date = true;
+     current_graphics_root_up_to_date_ &= ~(1u << root_parameter_float_constants_vertex);
+   }
+diff --git a/src/ui/d3d12/d3d12_provider.cpp b/src/ui/d3d12/d3d12_provider.cpp
+index bf8252b..cb8fcf2 100644
+--- a/src/ui/d3d12/d3d12_provider.cpp
++++ b/src/ui/d3d12/d3d12_provider.cpp
+@@ -12,6 +12,7 @@
+ #include <cstdlib>
+ 
+ #include <rex/cvar.h>
++#include <rex/graphics/vr_bridge.h>
+ #include <rex/logging.h>
+ #include <rex/math.h>
+ #include <rex/ui/d3d12/d3d12_immediate_drawer.h>
+@@ -250,15 +251,39 @@ bool D3D12Provider::Initialize() {
+     return false;
+   }
+ 
++  // A VR session can require the adapter the OpenXR runtime chose. The
++  // callback is null unless the game asked for VR, so flat startups take the
++  // same path as before.
++  uint32_t vr_luid_low = 0;
++  int32_t vr_luid_high = 0;
++  uint32_t vr_feature_level = static_cast<uint32_t>(D3D_FEATURE_LEVEL_11_0);
++  bool vr_adapter = false;
++  if (const rex::graphics::vr::Bridge* vr_bridge = rex::graphics::vr::GetBridge()) {
++    if (vr_bridge->select_adapter &&
++        vr_bridge->select_adapter(&vr_luid_low, &vr_luid_high, &vr_feature_level,
++                                  vr_bridge->userdata)) {
++      vr_adapter = true;
++      if (vr_feature_level < static_cast<uint32_t>(D3D_FEATURE_LEVEL_11_0)) {
++        vr_feature_level = static_cast<uint32_t>(D3D_FEATURE_LEVEL_11_0);
++      }
++    }
++  }
++
+   // Choose the adapter.
+   uint32_t adapter_index = 0;
+   IDXGIAdapter1* adapter = nullptr;
+   while (dxgi_factory->EnumAdapters1(adapter_index, &adapter) == S_OK) {
+     DXGI_ADAPTER_DESC1 adapter_desc;
+     if (SUCCEEDED(adapter->GetDesc1(&adapter_desc))) {
+-      if (SUCCEEDED(pfn_d3d12_create_device_(adapter, D3D_FEATURE_LEVEL_11_0, _uuidof(ID3D12Device),
++      const D3D_FEATURE_LEVEL feature_level = static_cast<D3D_FEATURE_LEVEL>(vr_feature_level);
++      if (SUCCEEDED(pfn_d3d12_create_device_(adapter, feature_level, _uuidof(ID3D12Device),
+                                              nullptr))) {
+-        if (REXCVAR_GET(d3d12_adapter) >= 0) {
++        if (vr_adapter) {
++          if (adapter_desc.AdapterLuid.LowPart == vr_luid_low &&
++              adapter_desc.AdapterLuid.HighPart == vr_luid_high) {
++            break;
++          }
++        } else if (REXCVAR_GET(d3d12_adapter) >= 0) {
+           if (adapter_index == REXCVAR_GET(d3d12_adapter)) {
+             break;
+           }
+@@ -277,6 +302,12 @@ bool D3D12Provider::Initialize() {
+     adapter = nullptr;
+     ++adapter_index;
+   }
++  if (vr_adapter && adapter == nullptr) {
++    REXLOG_ERROR(
++        "VR requested DXGI adapter LUID {:08X}:{:08X}, but no Direct3D 12 "
++        "device could be created on it",
++        static_cast<uint32_t>(vr_luid_high), vr_luid_low);
++  }
+   if (adapter == nullptr) {
+     REXLOG_ERROR(
+         "Failed to get an adapter supporting Direct3D 12 with the feature "
+@@ -305,7 +336,8 @@ bool D3D12Provider::Initialize() {
+ 
+   // Create the Direct3D 12 device.
+   ID3D12Device* device;
+-  if (FAILED(pfn_d3d12_create_device_(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)))) {
++  const D3D_FEATURE_LEVEL create_level = static_cast<D3D_FEATURE_LEVEL>(vr_feature_level);
++  if (FAILED(pfn_d3d12_create_device_(adapter, create_level, IID_PPV_ARGS(&device)))) {
+     REXLOG_ERROR("Failed to create a Direct3D 12 feature level 11_0 device");
+     adapter->Release();
+     dxgi_factory->Release();
+@@ -397,6 +429,12 @@ bool D3D12Provider::Initialize() {
+   device_ = device;
+   direct_queue_ = direct_queue;
+ 
++  if (const rex::graphics::vr::Bridge* vr_bridge = rex::graphics::vr::GetBridge()) {
++    if (vr_bridge->on_d3d12_device) {
++      vr_bridge->on_d3d12_device(device_, direct_queue_, vr_bridge->userdata);
++    }
++  }
++
+   // Get descriptor sizes for each type.
+   for (uint32_t i = 0; i < D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES; ++i) {
+     descriptor_sizes_[i] = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE(i));

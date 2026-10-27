@@ -20,6 +20,7 @@ SDK.
 | Local split-screen (`--signed_in_players=2`..`4`) | worked on the 0.1 build; not re-tested |
 | System Link (LAN) and internet play via an [xlive](https://github.com/sp00nznet/xlive) relay | the relay found a hosted session on the 0.1 build, then crashed; not tested on 0.10 ([details](docs/networking.md#what-has-been-tested)) |
 | Startup | about 90 s before the window appears on the test machine ([ROADMAP](ROADMAP.md)) |
+| VR (Quest through Virtual Desktop) | optional, untested here. `Setup.cmd -Vr`, then `PlayVR.cmd`. [docs/vr.md](docs/vr.md) |
 
 This repository holds no game code or data. The C++ is generated on your machine from your own copy
 of the game and is never committed or published, and neither is a build of it (see
@@ -168,6 +169,9 @@ driving and firing. That's how the screenshots above were made.
 
 Logs go to `project\build\logs\`.
 
+Headset play is a separate setup (`Setup.cmd -Vr`) so a normal build stays flat. Steps, the
+`--vr` options, and which log lines to send if it fails are in [docs/vr.md](docs/vr.md).
+
 ## Building from source
 
 The pieces and how they fit are in [docs/architecture.md](docs/architecture.md); networking is in
@@ -177,7 +181,7 @@ The pieces and how they fit are in [docs/architecture.md](docs/architecture.md);
 - `project/vig8_manifest.toml` tells ReXGlue's codegen where the game's code is and lists the
   functions its scanner misses. Codegen also runs as a build step when the manifest changes.
 - `project/src/main.cpp` is the app; `stubs.cpp` and `net.cpp` override kernel imports and game
-  functions.
+  functions. `src/vr/` is the optional headset path ([docs/vr.md](docs/vr.md)).
 
 ## License
 

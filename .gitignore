@@ -22,6 +22,7 @@ build/
 out/
 project/build*/
 tools/rexglue-sdk*/
+tools/openxr-sdk/
 tools/xlive/
 tools/360tools/
 tools/XenonRecomp/
@@ -33,6 +34,7 @@ tools/XenonRecomp/
 
 # --- Setup and run output ---
 Play.cmd
+PlayVR.cmd
 setup.log
 logs/
 *.log
